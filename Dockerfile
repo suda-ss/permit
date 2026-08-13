@@ -61,7 +61,13 @@ COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
 COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh
+RUN groupadd --system app \
+    && useradd --system --gid app --create-home --home-dir /home/app app \
+    && chown -R app:app /app /home/app \
+    && chmod +x docker-entrypoint.sh
+
+ENV HOME=/home/app
+USER app
 
 # Only the frontend port is published — the backend (port 8000) stays
 # container-internal, reached only via Next.js's rewrite proxy. This is the
