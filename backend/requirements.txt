@@ -1,0 +1,12 @@
+# Scoped to what this project actually needs; also what the Docker image
+# installs (see ../Dockerfile). Covers both the FastAPI backend and the CLI
+# (main.py), plus the Postgres/pgvector/embedding tooling under tools/.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+claude-agent-sdk>=0.2.136
+pydantic>=2
+python-dotenv>=1
+asyncpg>=0.29
+pgvector>=0.3.6
+sentence-transformers>=3.0
+pypdf>=4.0

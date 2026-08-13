@@ -1,0 +1,49 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: permit-agent-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-permits}
+      POSTGRES_USER: ${POSTGRES_USER:-permits}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    # Published to loopback only, and mainly so you can run main.py/backend
+    # directly on the host during local dev (`docker compose up db`) while
+    # the app itself still uses claude login instead of an API key. Not
+    # 5432, to avoid clashing with a Postgres you may already have running.
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-permits} -d ${POSTGRES_DB:-permits}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+    container_name: permit-agent
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-permits}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-permits}
+    volumes:
+      - raw-storage:/app/storage/raw
+    # Loopback-only — nginx (or whatever reverse proxy you put in front) is
+    # the only thing that should reach this port. Port 3007 chosen to avoid
+    # clashing with research_Agent's 3006 on the same host; check `ss -tlnp`
+    # before picking a different one if both run here.
+    ports:
+      - "127.0.0.1:3007:3000"
+
+volumes:
+  pg-data:
+  raw-storage:

@@ -1,0 +1,3 @@
+# For local dev (CLI or bare uvicorn) — the real dependency list lives in
+# backend/requirements.txt since that's also what the Docker image installs.
+-r backend/requirements.txt
