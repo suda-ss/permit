@@ -137,33 +137,37 @@ function ArchitectureFlow() {
         <div className="flow-arrow">↓</div>
         <article>
           <span>02</span>
-          <h2>Main orchestrator</h2>
+          <h2>Main orchestrator agent</h2>
           <p>Routes work through Claude Agent SDK, decides when to search AHJ data, call tools, and delegate to specialist agents.</p>
-          <dl><dt>Tools</dt><dd>Task, find_ahj, get_structured_permit_data, vector_search, save_report</dd><dt>State</dt><dd>Thread history is stored per signed-in user in PostgreSQL.</dd></dl>
+          <dl><dt>Agents</dt><dd>ahj-fetch-agent, parsing-agent, vector-ingest-agent, compile-agent</dd><dt>Tools</dt><dd>Task, find_ahj, get_structured_permit_data, vector_search, save_report</dd><dt>State</dt><dd>Thread history is stored per signed-in user in PostgreSQL.</dd></dl>
         </article>
         <div className="flow-arrow split">↙ ↓ ↘</div>
         <div className="flow-grid">
           <article>
             <span>03A</span>
-            <h2>Source discovery</h2>
+            <h2>AHJ fetch agent</h2>
             <p>Finds authority-having-jurisdiction sites, portals, forms, and official source pages.</p>
+            <dl><dt>Skill</dt><dd>Official-source discovery and raw document capture</dd></dl>
           </article>
           <article>
             <span>03B</span>
-            <h2>Parsing and storage</h2>
+            <h2>Parsing agent</h2>
             <p>Extracts fees, timelines, deadlines, required documents, submission rules, and raw source text.</p>
+            <dl><dt>Skill</dt><dd>Structured Postgres extraction from saved AHJ documents</dd></dl>
           </article>
           <article>
             <span>03C</span>
-            <h2>Vector/RAG search</h2>
+            <h2>Vector ingest agent</h2>
             <p>Searches pgvector permit chunks to ground answers in stored source material.</p>
+            <dl><dt>Skill</dt><dd>Unstructured content chunking, embeddings, and semantic retrieval</dd></dl>
           </article>
         </div>
         <div className="flow-arrow">↓</div>
         <article>
           <span>04</span>
-          <h2>Permit report</h2>
+          <h2>Compile agent</h2>
           <p>Returns a structured answer with source-backed permit requirements, fees, timelines, documents, and next steps.</p>
+          <dl><dt>Output</dt><dd>Final permit report using structured tables plus RAG context</dd></dl>
         </article>
       </div>
     </section>
