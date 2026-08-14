@@ -582,7 +582,6 @@ export default function ChatPage() {
           <button className="sidebar-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close menu">×</button>
         </div>
         <button className="new-thread" type="button" onClick={newConversation} disabled={busy}><span>＋</span> New conversation</button>
-        <button className={view === "architecture" ? "nav-link active" : "nav-link"} type="button" onClick={() => { setView("architecture"); setSidebarOpen(false); }}><span>⌘</span> Architecture</button>
         <label className="thread-search">
           <span>Search threads</span>
           <input value={threadSearch} onChange={(e) => setThreadSearch(e.target.value)} placeholder="Search recent chats" />
@@ -596,6 +595,7 @@ export default function ChatPage() {
             </div>
           ))}
         </nav>
+        <button className={view === "architecture" ? "nav-link architecture-link active" : "nav-link architecture-link"} type="button" onClick={() => { setView("architecture"); setSidebarOpen(false); }}><span>⌘</span> Architecture</button>
         <div className="sidebar-account">
           <div className="avatar">{user.name.charAt(0).toUpperCase()}</div>
           <div><strong>{user.name}</strong><small>{user.email}</small></div>

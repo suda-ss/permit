@@ -818,6 +818,18 @@ body {
   color: white;
 }
 
+.architecture-link {
+  margin: 0.8rem 0 0;
+  padding-top: 0.7rem;
+  border-top: 1px solid #1e293b;
+  border-radius: 0;
+}
+
+.architecture-link:hover,
+.architecture-link.active {
+  border-radius: 8px;
+}
+
 .thread-search {
   display: grid;
   gap: 0.35rem;
