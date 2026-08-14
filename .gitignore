@@ -17,6 +17,7 @@ tsconfig.tsbuildinfo
 
 # Local Claude Code trust/approval state — machine-specific, not shared.
 .claude/settings.local.json
+.local/
 
 # Raw fetched documents (Docker uses the named raw-storage volume instead;
 # local runs would otherwise accumulate real crawled content here).
