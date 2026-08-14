@@ -29,18 +29,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+from backend.auth import google_callback, google_start, login, logout, me, register, require_user  # noqa: E402
 from backend.session_manager import sessions  # noqa: E402
 from chat_loop import run_turn  # noqa: E402
+from tools.db import close_pool  # noqa: E402
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     sessions.start_reaper()
     yield
+    await close_pool()
     await sessions.shutdown()
 
 
@@ -57,16 +60,27 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+app.add_api_route("/api/auth/me", me, methods=["GET"])
+app.add_api_route("/api/auth/register", register, methods=["POST"])
+app.add_api_route("/api/auth/login", login, methods=["POST"])
+app.add_api_route("/api/auth/logout", logout, methods=["POST"])
+app.add_api_route("/api/auth/google/start", google_start, methods=["GET"])
+app.add_api_route("/api/auth/google/callback", google_callback, methods=["GET"])
+
+
 @app.post("/api/chat")
-async def chat(request: ChatRequest) -> StreamingResponse:
-    if not request.message.strip():
+async def chat(chat_request: ChatRequest, request: Request) -> StreamingResponse:
+    user = await require_user(request)
+
+    if not chat_request.message.strip():
         raise HTTPException(status_code=400, detail="message must not be empty")
 
-    client = await sessions.get_or_create(request.session_id)
+    scoped_session_id = f"auth-user:{user['id']}:{chat_request.session_id}"
+    client = await sessions.get_or_create(scoped_session_id)
 
     async def event_stream():
         try:
-            async for event in run_turn(client, request.message):
+            async for event in run_turn(client, chat_request.message):
                 yield json.dumps(event) + "\n"
         except Exception as exc:  # surface to the chat UI instead of a bare 500
             yield json.dumps({"type": "error", "message": str(exc)}) + "\n"

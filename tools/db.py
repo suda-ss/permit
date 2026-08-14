@@ -33,6 +33,12 @@ async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         dsn = os.environ["DATABASE_URL"]
+        bootstrap_conn = await asyncpg.connect(dsn)
+        try:
+            await bootstrap_conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        finally:
+            await bootstrap_conn.close()
+
         _pool = await asyncpg.create_pool(dsn, init=_init_connection, min_size=1, max_size=10)
         async with _pool.acquire() as conn:
             await conn.execute(SCHEMA_PATH.read_text())

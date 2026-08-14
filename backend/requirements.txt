@@ -3,6 +3,7 @@
 # (main.py), plus the Postgres/pgvector/embedding tooling under tools/.
 fastapi>=0.115
 uvicorn[standard]>=0.30
+httpx>=0.27
 claude-agent-sdk>=0.2.136
 pydantic>=2
 python-dotenv>=1

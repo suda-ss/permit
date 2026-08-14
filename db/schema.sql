@@ -122,3 +122,34 @@ CREATE INDEX IF NOT EXISTS idx_permit_chunks_ahj ON permit_chunks (ahj_id);
 -- effective until the table has meaningful data. Fine for this scale.
 CREATE INDEX IF NOT EXISTS idx_permit_chunks_embedding ON permit_chunks
     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+CREATE TABLE IF NOT EXISTS auth_users (
+    id                 BIGSERIAL PRIMARY KEY,
+    name               TEXT NOT NULL,
+    email              TEXT NOT NULL UNIQUE,
+    password_hash      TEXT,
+    email_verified_at  TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_users_email_lower ON auth_users (lower(email));
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id          TEXT PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_oauth_states (
+    id          TEXT PRIMARY KEY,
+    next_path   TEXT NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_oauth_states_expires_at ON auth_oauth_states (expires_at);

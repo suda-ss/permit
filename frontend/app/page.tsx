@@ -33,13 +33,34 @@ type Message = {
   error?: string;
 };
 
-const SESSION_KEY = "permit-agent-session-id";
+type AuthUser = {
+  id: number | string;
+  name: string;
+  email: string;
+  email_verified: boolean;
+};
 
-function getSessionId(): string {
-  let id = sessionStorage.getItem(SESSION_KEY);
+type AuthMode = "login" | "register";
+
+type AuthResponse = {
+  status: string;
+  user: AuthUser | null;
+  message?: string;
+};
+
+const SESSION_KEY_PREFIX = "permit-agent-session-id";
+const APP_BASE_PATH = (process.env.NEXT_PUBLIC_APP_BASE_PATH || "/permits").replace(/\/$/, "");
+
+function sessionStorageKey(userId: AuthUser["id"]): string {
+  return `${SESSION_KEY_PREFIX}:${userId}`;
+}
+
+function getSessionId(userId: AuthUser["id"]): string {
+  const key = sessionStorageKey(userId);
+  let id = sessionStorage.getItem(key);
   if (!id) {
     id = crypto.randomUUID();
-    sessionStorage.setItem(SESSION_KEY, id);
+    sessionStorage.setItem(key, id);
   }
   return id;
 }
@@ -48,6 +69,42 @@ function toolStatusLabel(name: string): string {
   // Subagent delegation reads better as "Delegating to X" than "Using Agent".
   if (name === "Agent" || name === "Task") return "Delegating to a subagent…";
   return `Using ${name}…`;
+}
+
+function authApiPath(path: string): string {
+  return `${APP_BASE_PATH}${path}`;
+}
+
+function authErrorMessage(body: unknown, fallback: string): string {
+  if (body && typeof body === "object" && "message" in body) {
+    const message = String((body as { message?: unknown }).message || "").trim();
+    if (message) return message;
+  }
+  return fallback;
+}
+
+async function authApi(path: string, options: RequestInit = {}): Promise<AuthResponse> {
+  const response = await fetch(authApiPath(path), {
+    ...options,
+    credentials: "include",
+    headers: {
+      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(options.headers || {}),
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(authErrorMessage(body, "Authentication failed. Please try again."));
+  }
+  return body as AuthResponse;
+}
+
+function googleStartUrl(): string {
+  const next =
+    typeof window === "undefined"
+      ? APP_BASE_PATH || "/"
+      : `${window.location.pathname}${window.location.search}`;
+  return `${authApiPath("/api/auth/google/start")}?next=${encodeURIComponent(next)}`;
 }
 
 // Fee/document tables can be wider than the bubble — scroll the table
@@ -60,7 +117,156 @@ const markdownComponents = {
   ),
 };
 
+function AuthGate({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
+  const [mode, setMode] = useState<AuthMode>("login");
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const authErrorCode = params.get("auth_error");
+    if (authErrorCode) {
+      const messages: Record<string, string> = {
+        google_not_configured: "Google login is not configured yet.",
+        google_state_mismatch: "Google login expired. Please try again.",
+        google_token_failed: "Google did not complete the login. Please try again.",
+        google_email_unverified: "Google did not return a verified email address.",
+        google_login_failed: "Google login failed. Please try again.",
+      };
+      setError(messages[authErrorCode] || "Sign in failed. Please try again.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
+    authApi("/api/auth/me")
+      .then((data) => {
+        if (data.user) onAuthed(data.user);
+      })
+      .catch(() => undefined)
+      .finally(() => setReady(true));
+  }, [onAuthed]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+
+    try {
+      const body =
+        mode === "register"
+          ? { name: name.trim(), email: email.trim(), password }
+          : { email: email.trim(), password };
+      const data = await authApi(mode === "register" ? "/api/auth/register" : "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (!data.user) throw new Error("The app did not return an account.");
+      onAuthed(data.user);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startGoogleAuth() {
+    window.location.href = googleStartUrl();
+  }
+
+  if (!ready) {
+    return (
+      <main className="auth-page">
+        <div className="auth-card auth-card-compact">Checking your session...</div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="auth-page">
+      <section className="auth-card">
+        <div className="auth-heading">
+          <p className="auth-kicker">Permit Agent account</p>
+          <h1>Permit Research Agent</h1>
+        </div>
+
+        <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button
+            type="button"
+            className={mode === "login" ? "active" : ""}
+            onClick={() => setMode("login")}
+          >
+            Log in
+          </button>
+          <button
+            type="button"
+            className={mode === "register" ? "active" : ""}
+            onClick={() => setMode("register")}
+          >
+            Sign up
+          </button>
+        </div>
+
+        <button type="button" className="google-auth" onClick={startGoogleAuth}>
+          Continue with Google
+        </button>
+
+        <div className="auth-divider">
+          <span>or</span>
+        </div>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          {mode === "register" && (
+            <label>
+              Name
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+                required
+              />
+            </label>
+          )}
+
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              minLength={mode === "register" ? 8 : undefined}
+              required
+            />
+          </label>
+
+          {error && <div className="auth-error">{error}</div>}
+
+          <button type="submit" disabled={busy}>
+            {busy ? "Working..." : mode === "register" ? "Create account" : "Log in"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 export default function ChatPage() {
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -73,12 +279,11 @@ export default function ChatPage() {
   // turn summary shows up as its own chat message.
   const startNewBubbleRef = useRef(true);
 
-  // sessionStorage is per-tab (unlike localStorage), which is exactly the
-  // isolation model this app wants: refresh keeps the conversation, a new
-  // tab gets an independent one.
+  // sessionStorage is per-tab and scoped per signed-in user. Refresh keeps
+  // a user's conversation, while logout or account switching starts fresh.
   useEffect(() => {
-    setSessionId(getSessionId());
-  }, []);
+    setSessionId(user ? getSessionId(user.id) : null);
+  }, [user]);
 
   // Instant (not smooth) scroll: turns can stream for minutes with events
   // arriving every second or two (including ~60s status-check gaps), and a
@@ -133,7 +338,7 @@ export default function ChatPage() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || !sessionId || busy) return;
+    if (!text || !sessionId || busy || !user) return;
 
     setInput("");
     setBusy(true);
@@ -142,7 +347,7 @@ export default function ChatPage() {
 
     try {
       // Must match basePath in next.config.js.
-      const res = await fetch("/permits/api/chat", {
+      const res = await fetch(authApiPath("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, message: text }),
@@ -150,6 +355,7 @@ export default function ChatPage() {
 
       if (!res.ok) {
         const body = await res.text();
+        if (res.status === 401) setUser(null);
         throw new Error(`${res.status}: ${body}`);
       }
       if (!res.body) {
@@ -194,6 +400,18 @@ export default function ChatPage() {
     sendMessage();
   }
 
+  async function logout() {
+    if (user) sessionStorage.removeItem(sessionStorageKey(user.id));
+    await authApi("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    setUser(null);
+    setMessages([]);
+    setInput("");
+  }
+
+  if (!user) {
+    return <AuthGate onAuthed={setUser} />;
+  }
+
   // Before the first message: a centered hero (title + prompt box), no
   // header or log. After: normal layout with the prompt box docked at the
   // bottom — the same transition ChatGPT/Claude's own landing uses.
@@ -201,7 +419,15 @@ export default function ChatPage() {
     <main className={`chat ${hasStarted ? "" : "chat-landing"}`}>
       {hasStarted && (
         <header className="chat-header">
-          <h1>Permit Research Agent</h1>
+          <div>
+            <h1>Permit Research Agent</h1>
+          </div>
+          <div className="account-menu">
+            <span>{user.email}</span>
+            <button type="button" onClick={logout}>
+              Log out
+            </button>
+          </div>
         </header>
       )}
 
@@ -244,6 +470,12 @@ export default function ChatPage() {
         </div>
       ) : (
         <div className="landing">
+          <div className="landing-account">
+            <span>{user.email}</span>
+            <button type="button" onClick={logout}>
+              Log out
+            </button>
+          </div>
           <h1 className="landing-title">Get full Permit Details with Permit Agent</h1>
           <form className="chat-input landing-input" onSubmit={handleSubmit}>
             <input
