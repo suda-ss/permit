@@ -153,3 +153,26 @@ CREATE TABLE IF NOT EXISTS auth_oauth_states (
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_states_expires_at ON auth_oauth_states (expires_at);
+
+CREATE TABLE IF NOT EXISTS permit_conversations (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL DEFAULT 'New conversation',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_permit_conversations_user_updated
+    ON permit_conversations (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS permit_conversation_messages (
+    id               BIGSERIAL PRIMARY KEY,
+    conversation_id  UUID NOT NULL REFERENCES permit_conversations(id) ON DELETE CASCADE,
+    user_id          BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+    role             TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content          TEXT NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_permit_conversation_messages_conversation
+    ON permit_conversation_messages (conversation_id, created_at, id);

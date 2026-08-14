@@ -725,3 +725,395 @@ body {
     padding: 0.75rem 0.85rem;
   }
 }
+
+.workspace {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.sidebar {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 1rem;
+  background: #0f172a;
+  color: #f8fafc;
+  border-right: 1px solid #1e293b;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0 0.4rem 1.2rem;
+}
+
+.sidebar-brand b {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #2563eb;
+  color: white;
+}
+
+.sidebar-brand div {
+  display: grid;
+  min-width: 0;
+}
+
+.sidebar-brand strong,
+.sidebar-brand small,
+.sidebar-account strong,
+.sidebar-account small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-brand small,
+.sidebar-account small {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.sidebar-close,
+.mobile-menu,
+.sidebar-scrim {
+  display: none;
+}
+
+.new-thread,
+.nav-link {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.65rem 0.8rem;
+  border: 0;
+  border-radius: 8px;
+  background: #1e293b;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nav-link {
+  margin-top: 0.55rem;
+  background: transparent;
+  color: #cbd5e1;
+  text-align: left;
+}
+
+.nav-link:hover,
+.nav-link.active {
+  background: #1e293b;
+  color: white;
+}
+
+.thread-search {
+  display: grid;
+  gap: 0.35rem;
+  margin: 1rem 0 0.8rem;
+  padding-top: 1rem;
+  border-top: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.thread-search input {
+  width: 100%;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.58rem 0.7rem;
+  background: #111827;
+  color: white;
+  font: inherit;
+  font-weight: 500;
+}
+
+.thread-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.thread-list small {
+  display: block;
+  margin: 0 0 0.4rem;
+  padding: 0 0.35rem;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.thread-list p {
+  margin: 0;
+  padding: 0.55rem 0.35rem;
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.thread {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  margin: 0.15rem 0;
+  border-radius: 8px;
+  color: #cbd5e1;
+}
+
+.thread:hover,
+.thread.active {
+  background: #1e293b;
+  color: white;
+}
+
+.thread-open {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.55rem 0.6rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.thread-open span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-delete {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.thread-delete:hover {
+  background: #7f1d1d;
+  color: white;
+}
+
+.sidebar-account {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 30px;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 1rem 0.35rem 0;
+  border-top: 1px solid #1e293b;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #1e293b;
+  color: white;
+  font-weight: 800;
+}
+
+.sidebar-account button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.chat {
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.mobile-menu {
+  position: absolute;
+  z-index: 25;
+  top: 0.9rem;
+  left: 0.9rem;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: white;
+  color: #0f172a;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.architecture-view {
+  height: 100%;
+  overflow: auto;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.architecture-view > header {
+  padding: 1.5rem clamp(1rem, 5vw, 3rem);
+  border-bottom: 1px solid #e2e8f0;
+  background: white;
+}
+
+.architecture-view > header p {
+  margin: 0 0 0.25rem;
+  color: #2563eb;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.architecture-view > header h1 {
+  margin: 0;
+  font-size: 1.55rem;
+  letter-spacing: 0;
+}
+
+.flow {
+  width: min(1040px, calc(100% - 2rem));
+  margin: 2rem auto 3rem;
+}
+
+.flow article {
+  padding: 1.2rem;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.flow article span {
+  color: #2563eb;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.flow article h2 {
+  margin: 0.25rem 0 0.4rem;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.flow article p,
+.flow article dd {
+  margin: 0;
+  color: #475569;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.flow article dl {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 0.4rem 0.7rem;
+  margin: 0.85rem 0 0;
+}
+
+.flow article dt {
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.flow-arrow {
+  padding: 0.65rem;
+  text-align: center;
+  color: #2563eb;
+  font-weight: 900;
+}
+
+.flow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+}
+
+@media (max-width: 800px) {
+  .workspace {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 50;
+    inset: 0 auto 0 0;
+    width: min(86vw, 320px);
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: 18px 0 55px rgba(0, 0, 0, 0.4);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-scrim.visible {
+    display: block;
+    position: fixed;
+    z-index: 40;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(15, 23, 42, 0.58);
+  }
+
+  .sidebar-close {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    margin-left: auto;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #cbd5e1;
+    font-size: 1.5rem;
+  }
+
+  .mobile-menu {
+    display: grid;
+    place-items: center;
+  }
+
+  .chat-header {
+    padding-left: 4rem;
+  }
+
+  .flow-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .architecture-view > header {
+    padding-left: 4rem;
+  }
+}

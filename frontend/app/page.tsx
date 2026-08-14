@@ -34,6 +34,17 @@ type Message = {
   error?: string;
 };
 
+type Conversation = {
+  id: string;
+  title: string;
+  updated_at: string;
+};
+
+type StoredMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
+
 type AuthUser = {
   id: number | string;
   name: string;
@@ -49,22 +60,7 @@ type AuthResponse = {
   message?: string;
 };
 
-const SESSION_KEY_PREFIX = "permit-agent-session-id";
 const APP_BASE_PATH = (process.env.NEXT_PUBLIC_APP_BASE_PATH || "/permits").replace(/\/$/, "");
-
-function sessionStorageKey(userId: AuthUser["id"]): string {
-  return `${SESSION_KEY_PREFIX}:${userId}`;
-}
-
-function getSessionId(userId: AuthUser["id"]): string {
-  const key = sessionStorageKey(userId);
-  let id = sessionStorage.getItem(key);
-  if (!id) {
-    id = crypto.randomUUID();
-    sessionStorage.setItem(key, id);
-  }
-  return id;
-}
 
 function toolStatusLabel(name: string): string {
   // Subagent delegation reads better as "Delegating to X" than "Using Agent".
@@ -124,6 +120,55 @@ const markdownComponents = {
     </div>
   ),
 };
+
+function ArchitectureFlow() {
+  return (
+    <section className="architecture-view">
+      <header>
+        <p>System map</p>
+        <h1>Permit Agent architecture</h1>
+      </header>
+      <div className="flow">
+        <article>
+          <span>01</span>
+          <h2>User request</h2>
+          <p>Address, jurisdiction, permit type, project details, and research objective.</p>
+        </article>
+        <div className="flow-arrow">↓</div>
+        <article>
+          <span>02</span>
+          <h2>Main orchestrator</h2>
+          <p>Routes work through Claude Agent SDK, decides when to search AHJ data, call tools, and delegate to specialist agents.</p>
+          <dl><dt>Tools</dt><dd>Task, find_ahj, get_structured_permit_data, vector_search, save_report</dd><dt>State</dt><dd>Thread history is stored per signed-in user in PostgreSQL.</dd></dl>
+        </article>
+        <div className="flow-arrow split">↙ ↓ ↘</div>
+        <div className="flow-grid">
+          <article>
+            <span>03A</span>
+            <h2>Source discovery</h2>
+            <p>Finds authority-having-jurisdiction sites, portals, forms, and official source pages.</p>
+          </article>
+          <article>
+            <span>03B</span>
+            <h2>Parsing and storage</h2>
+            <p>Extracts fees, timelines, deadlines, required documents, submission rules, and raw source text.</p>
+          </article>
+          <article>
+            <span>03C</span>
+            <h2>Vector/RAG search</h2>
+            <p>Searches pgvector permit chunks to ground answers in stored source material.</p>
+          </article>
+        </div>
+        <div className="flow-arrow">↓</div>
+        <article>
+          <span>04</span>
+          <h2>Permit report</h2>
+          <p>Returns a structured answer with source-backed permit requirements, fees, timelines, documents, and next steps.</p>
+        </article>
+      </div>
+    </section>
+  );
+}
 
 function AuthGate({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
   const [mode, setMode] = useState<AuthMode>("login");
@@ -275,7 +320,11 @@ function AuthGate({ onAuthed }: { onAuthed: (user: AuthUser) => void }) {
 
 export default function ChatPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [threadSearch, setThreadSearch] = useState("");
+  const [view, setView] = useState<"chat" | "architecture">("chat");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -287,10 +336,9 @@ export default function ChatPage() {
   // turn summary shows up as its own chat message.
   const startNewBubbleRef = useRef(true);
 
-  // sessionStorage is per-tab and scoped per signed-in user. Refresh keeps
-  // a user's conversation, while logout or account switching starts fresh.
   useEffect(() => {
-    setSessionId(user ? getSessionId(user.id) : null);
+    if (!user) return;
+    refreshConversations();
   }, [user]);
 
   // Instant (not smooth) scroll: turns can stream for minutes with events
@@ -344,13 +392,107 @@ export default function ChatPage() {
     });
   }
 
+  async function refreshConversations(resetToNew = true) {
+    const response = await fetch(authApiPath("/api/conversations"), { credentials: "include" });
+    if (!response.ok) return;
+    const data = await response.json();
+    setConversations(data.conversations);
+    if (resetToNew) {
+      setView("chat");
+      setConversationId(null);
+      setMessages([]);
+    }
+  }
+
+  async function loadMessages(id: string) {
+    const response = await fetch(authApiPath(`/api/conversations/${id}/messages`), {
+      credentials: "include",
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    setMessages(
+      data.messages
+        .filter((item: StoredMessage) => item.role === "user" || item.role === "assistant")
+        .map((item: StoredMessage) => ({
+          role: item.role,
+          text: item.content,
+          status: null,
+          notices: [],
+        })),
+    );
+  }
+
+  async function openConversation(id: string) {
+    if (busy) return;
+    setView("chat");
+    setSidebarOpen(false);
+    setConversationId(id);
+    startNewBubbleRef.current = true;
+    await loadMessages(id);
+  }
+
+  function newConversation() {
+    setView("chat");
+    setSidebarOpen(false);
+    setConversationId(null);
+    setMessages([]);
+    setInput("");
+    startNewBubbleRef.current = true;
+  }
+
+  async function activeConversation(text: string) {
+    if (conversationId) return conversationId;
+    const response = await fetch(authApiPath("/api/conversations"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: text.slice(0, 80) }),
+    });
+    if (!response.ok) throw new Error("Could not create conversation");
+    const data = await response.json();
+    setConversations((current) => [data, ...current]);
+    setConversationId(data.id);
+    return data.id as string;
+  }
+
+  async function deleteConversation(id: string, title: string) {
+    if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
+    setBusy(true);
+    const response = await fetch(authApiPath(`/api/conversations/${id}`), {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (response.ok) {
+      setConversations((current) => current.filter((item) => item.id !== id));
+      if (conversationId === id) newConversation();
+    }
+    setBusy(false);
+  }
+
   async function sendMessage() {
     const text = input.trim();
-    if (!text || !sessionId || busy || !user) return;
+    if (!text || busy || !user) return;
 
     setInput("");
     setBusy(true);
     startNewBubbleRef.current = true;
+    let activeId = conversationId;
+    try {
+      activeId = await activeConversation(text);
+    } catch (err) {
+      setMessages((prev) => [...prev, { role: "assistant", text: "", status: null, notices: [], error: (err as Error).message }]);
+      setBusy(false);
+      return;
+    }
+    setConversations((current) =>
+      current
+        .map((item) =>
+          item.id === activeId
+            ? { ...item, title: item.title === "New conversation" ? text.slice(0, 80) : item.title, updated_at: new Date().toISOString() }
+            : item,
+        )
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    );
     setMessages((prev) => [...prev, { role: "user", text, status: null, notices: [] }]);
 
     try {
@@ -358,7 +500,7 @@ export default function ChatPage() {
       const res = await fetch(authApiPath("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
+        body: JSON.stringify({ conversation_id: activeId, message: text }),
       });
 
       if (!res.ok) {
@@ -397,11 +539,17 @@ export default function ChatPage() {
     } catch (err) {
       applyEvent({ type: "error", message: (err as Error).message });
     } finally {
+      if (activeId) await loadMessages(activeId);
+      await refreshConversations(false);
+      if (activeId) setConversationId(activeId);
       setBusy(false);
     }
   }
 
-  const hasStarted = messages.length > 0;
+  const hasStarted = view === "chat" && messages.length > 0;
+  const filteredConversations = conversations.filter((item) =>
+    item.title.toLowerCase().includes(threadSearch.trim().toLowerCase()),
+  );
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -409,9 +557,10 @@ export default function ChatPage() {
   }
 
   async function logout() {
-    if (user) sessionStorage.removeItem(sessionStorageKey(user.id));
     await authApi("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     setUser(null);
+    setConversations([]);
+    setConversationId(null);
     setMessages([]);
     setInput("");
   }
@@ -420,102 +569,82 @@ export default function ChatPage() {
     return <AuthGate onAuthed={setUser} />;
   }
 
-  // Before the first message: a centered hero (title + prompt box), no
-  // header or log. After: normal layout with the prompt box docked at the
-  // bottom — the same transition ChatGPT/Claude's own landing uses.
   return (
-    <main className={`chat ${hasStarted ? "" : "chat-landing"}`}>
-      {hasStarted && (
-        <header className="chat-header">
+    <main className="workspace">
+      <button className={sidebarOpen ? "sidebar-scrim visible" : "sidebar-scrim"} onClick={() => setSidebarOpen(false)} aria-label="Close menu" />
+      <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
+        <div className="sidebar-brand">
+          <b>P</b>
           <div>
-            <h1>Permit Research Agent</h1>
+            <strong>Permit Agent</strong>
+            <small>{user.email}</small>
           </div>
-          <div className="account-menu">
-            <span>{user.email}</span>
-            <button type="button" onClick={logout}>
-              Log out
-            </button>
-          </div>
-        </header>
-      )}
-
-      {hasStarted ? (
-        <div className="chat-log">
-          {messages.map((m, i) => (
-            <div key={i} className={`bubble ${m.role}`}>
-              {m.notices.length > 0 && (
-                <div className="notices">
-                  {m.notices.map((n, j) => (
-                    <div key={j} className="notice">
-                      {n}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {m.text &&
-                (m.role === "assistant" ? (
-                  <div className="text markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {m.text}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <div className="text">{m.text}</div>
-                ))}
-              {m.status && (
-                <div className="status-line">
-                  <span className="status-dot" />
-                  {m.status}
-                </div>
-              )}
-              {m.error && <div className="error">Error: {m.error}</div>}
-              {m.costUsd != null && (
-                <div className="cost">turn cost: ${m.costUsd.toFixed(4)}</div>
-              )}
+          <button className="sidebar-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close menu">×</button>
+        </div>
+        <button className="new-thread" type="button" onClick={newConversation} disabled={busy}><span>＋</span> New conversation</button>
+        <button className={view === "architecture" ? "nav-link active" : "nav-link"} type="button" onClick={() => { setView("architecture"); setSidebarOpen(false); }}><span>⌘</span> Architecture</button>
+        <label className="thread-search">
+          <span>Search threads</span>
+          <input value={threadSearch} onChange={(e) => setThreadSearch(e.target.value)} placeholder="Search recent chats" />
+        </label>
+        <nav className="thread-list">
+          <small>Recent chats</small>
+          {filteredConversations.length === 0 ? <p>No conversations found</p> : filteredConversations.map((item) => (
+            <div className={item.id === conversationId && view === "chat" ? "thread active" : "thread"} key={item.id}>
+              <button className="thread-open" type="button" onClick={() => openConversation(item.id)} disabled={busy}><span>◫</span><span>{item.title}</span></button>
+              <button className="thread-delete" type="button" onClick={() => deleteConversation(item.id, item.title)} disabled={busy} aria-label={`Delete ${item.title}`}>×</button>
             </div>
           ))}
-          <div ref={bottomRef} />
+        </nav>
+        <div className="sidebar-account">
+          <div className="avatar">{user.name.charAt(0).toUpperCase()}</div>
+          <div><strong>{user.name}</strong><small>{user.email}</small></div>
+          <button type="button" onClick={logout} title="Log out">↗</button>
         </div>
-      ) : (
-        <div className="landing">
-          <div className="landing-account">
-            <span>{user.email}</span>
-            <button type="button" onClick={logout}>
-              Log out
-            </button>
-          </div>
-          <div className="landing-mark">P</div>
-          <h1 className="landing-title">What permit do you want to research?</h1>
-          <form className="chat-input landing-input" onSubmit={handleSubmit}>
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={submitOnEnter}
-              placeholder="e.g. What's required for a residential electrical permit in Austin, TX?"
-              disabled={busy || !sessionId}
-              autoFocus
-            />
-            <button type="submit" disabled={busy || !sessionId || !input.trim()} aria-label="Send message">
-              {busy ? "..." : "↑"}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {hasStarted && (
-        <form className="chat-input" onSubmit={handleSubmit}>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={submitOnEnter}
-            placeholder="e.g. What's required for a residential electrical permit in Austin, TX?"
-            disabled={busy || !sessionId}
-          />
-          <button type="submit" disabled={busy || !sessionId || !input.trim()} aria-label="Send message">
-            {busy ? "..." : "↑"}
-          </button>
-        </form>
-      )}
+      </aside>
+      <section className={`chat ${hasStarted ? "" : "chat-landing"}`}>
+        <button className="mobile-menu" type="button" onClick={() => setSidebarOpen(true)} aria-label="Open menu">☰</button>
+        {view === "architecture" ? <ArchitectureFlow /> : (
+          <>
+            {hasStarted && (
+              <header className="chat-header">
+                <div>
+                  <h1>{conversations.find((item) => item.id === conversationId)?.title || "Permit research"}</h1>
+                </div>
+              </header>
+            )}
+            {hasStarted ? (
+              <div className="chat-log">
+                {messages.map((m, i) => (
+                  <div key={i} className={`bubble ${m.role}`}>
+                    {m.notices.length > 0 && <div className="notices">{m.notices.map((n, j) => <div key={j} className="notice">{n}</div>)}</div>}
+                    {m.text && (m.role === "assistant" ? <div className="text markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.text}</ReactMarkdown></div> : <div className="text">{m.text}</div>)}
+                    {m.status && <div className="status-line"><span className="status-dot" />{m.status}</div>}
+                    {m.error && <div className="error">Error: {m.error}</div>}
+                    {m.costUsd != null && <div className="cost">turn cost: ${m.costUsd.toFixed(4)}</div>}
+                  </div>
+                ))}
+                <div ref={bottomRef} />
+              </div>
+            ) : (
+              <div className="landing">
+                <div className="landing-mark">P</div>
+                <h1 className="landing-title">What permit do you want to research?</h1>
+                <form className="chat-input landing-input" onSubmit={handleSubmit}>
+                  <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder="e.g. What's required for a residential electrical permit in Austin, TX?" disabled={busy} autoFocus />
+                  <button type="submit" disabled={busy || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
+                </form>
+              </div>
+            )}
+            {hasStarted && (
+              <form className="chat-input" onSubmit={handleSubmit}>
+                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder="e.g. What's required for a residential electrical permit in Austin, TX?" disabled={busy} />
+                <button type="submit" disabled={busy || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
+              </form>
+            )}
+          </>
+        )}
+      </section>
     </main>
   );
 }
