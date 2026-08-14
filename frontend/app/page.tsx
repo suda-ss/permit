@@ -322,7 +322,6 @@ export default function ChatPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [threadSearch, setThreadSearch] = useState("");
   const [view, setView] = useState<"chat" | "architecture">("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -547,9 +546,6 @@ export default function ChatPage() {
   }
 
   const hasStarted = view === "chat" && messages.length > 0;
-  const filteredConversations = conversations.filter((item) =>
-    item.title.toLowerCase().includes(threadSearch.trim().toLowerCase()),
-  );
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -582,13 +578,9 @@ export default function ChatPage() {
           <button className="sidebar-close" type="button" onClick={() => setSidebarOpen(false)} aria-label="Close menu">×</button>
         </div>
         <button className="new-thread" type="button" onClick={newConversation} disabled={busy}><span>＋</span> New conversation</button>
-        <label className="thread-search">
-          <span>Search threads</span>
-          <input value={threadSearch} onChange={(e) => setThreadSearch(e.target.value)} placeholder="Search recent chats" />
-        </label>
         <nav className="thread-list">
           <small>Recent chats</small>
-          {filteredConversations.length === 0 ? <p>No conversations found</p> : filteredConversations.map((item) => (
+          {conversations.length === 0 ? <p>No conversations yet</p> : conversations.map((item) => (
             <div className={item.id === conversationId && view === "chat" ? "thread active" : "thread"} key={item.id}>
               <button className="thread-open" type="button" onClick={() => openConversation(item.id)} disabled={busy}><span>◫</span><span>{item.title}</span></button>
               <button className="thread-delete" type="button" onClick={() => deleteConversation(item.id, item.title)} disabled={busy} aria-label={`Delete ${item.title}`}>×</button>

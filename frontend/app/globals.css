@@ -830,32 +830,13 @@ body {
   border-radius: 8px;
 }
 
-.thread-search {
-  display: grid;
-  gap: 0.35rem;
-  margin: 1rem 0 0.8rem;
-  padding-top: 1rem;
-  border-top: 1px solid #1e293b;
-  color: #94a3b8;
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.thread-search input {
-  width: 100%;
-  border: 1px solid #334155;
-  border-radius: 8px;
-  padding: 0.58rem 0.7rem;
-  background: #111827;
-  color: white;
-  font: inherit;
-  font-weight: 500;
-}
-
 .thread-list {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #1e293b;
 }
 
 .thread-list small {
