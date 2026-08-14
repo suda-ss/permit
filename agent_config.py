@@ -130,6 +130,11 @@ def build_options() -> ClaudeAgentOptions:
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
+        # Left unset, the CLI subprocess falls back to its own default
+        # model (Opus) for the orchestrator itself — only the subagents in
+        # AGENTS above pin "sonnet" explicitly. Set here so the whole
+        # pipeline (orchestrator + subagents) runs on the same model.
+        model="sonnet",
         cwd=str(HERE),
         # Skill (.claude/skills/*/SKILL.md) is filesystem-discovered.
         # Subagents are NOT — they come from `agents=AGENTS` above, whose
