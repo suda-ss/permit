@@ -6,6 +6,7 @@ import {
   useState,
   type ComponentPropsWithoutRef,
   type FormEvent,
+  type KeyboardEvent,
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -69,6 +70,13 @@ function toolStatusLabel(name: string): string {
   // Subagent delegation reads better as "Delegating to X" than "Using Agent".
   if (name === "Agent" || name === "Task") return "Delegating to a subagent…";
   return `Using ${name}…`;
+}
+
+function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
 }
 
 function authApiPath(path: string): string {
@@ -476,17 +484,19 @@ export default function ChatPage() {
               Log out
             </button>
           </div>
-          <h1 className="landing-title">Get full Permit Details with Permit Agent</h1>
+          <div className="landing-mark">P</div>
+          <h1 className="landing-title">What permit do you want to research?</h1>
           <form className="chat-input landing-input" onSubmit={handleSubmit}>
-            <input
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={submitOnEnter}
               placeholder="e.g. What's required for a residential electrical permit in Austin, TX?"
               disabled={busy || !sessionId}
               autoFocus
             />
-            <button type="submit" disabled={busy || !sessionId}>
-              {busy ? "Working..." : "Send"}
+            <button type="submit" disabled={busy || !sessionId || !input.trim()} aria-label="Send message">
+              {busy ? "..." : "↑"}
             </button>
           </form>
         </div>
@@ -494,14 +504,15 @@ export default function ChatPage() {
 
       {hasStarted && (
         <form className="chat-input" onSubmit={handleSubmit}>
-          <input
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={submitOnEnter}
             placeholder="e.g. What's required for a residential electrical permit in Austin, TX?"
             disabled={busy || !sessionId}
           />
-          <button type="submit" disabled={busy || !sessionId}>
-            {busy ? "Working..." : "Send"}
+          <button type="submit" disabled={busy || !sessionId || !input.trim()} aria-label="Send message">
+            {busy ? "..." : "↑"}
           </button>
         </form>
       )}
