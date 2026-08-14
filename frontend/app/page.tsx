@@ -598,8 +598,8 @@ export default function ChatPage() {
         <button className={view === "architecture" ? "nav-link architecture-link active" : "nav-link architecture-link"} type="button" onClick={() => { setView("architecture"); setSidebarOpen(false); }}><span>⌘</span> Architecture</button>
         <div className="sidebar-account">
           <div className="avatar">{user.name.charAt(0).toUpperCase()}</div>
-          <div><strong>{user.name}</strong><small>{user.email}</small></div>
-          <button type="button" onClick={logout} title="Log out">↗</button>
+          <div className="account-copy"><strong>{user.name}</strong><small>{user.email}</small></div>
+          <button className="logout-button" type="button" onClick={logout} title="Sign out" aria-label="Sign out">⇥</button>
         </div>
       </aside>
       <section className={`chat ${hasStarted ? "" : "chat-landing"}`}>
