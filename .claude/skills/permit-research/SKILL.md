@@ -8,7 +8,9 @@ description: Workflow for answering construction permit-requirement questions (f
 Use this workflow for any request that boils down to "what do I need to get
 `<permit type>` in `<jurisdiction>`." The goal is always the same predictable
 report (see Output Contract), built from a persistent knowledge base rather
-than re-researched from scratch every time.
+than re-researched from scratch every time. The report itself is delivered
+via Notion (see Step 4) — every chat message you send, including the final
+one, is a short summary, not the report text.
 
 ## Step 0 — Scope the request
 
@@ -71,20 +73,28 @@ rather than guessing:
    couldn't extract a category, note that — it will surface honestly in the
    final report rather than needing to be re-run speculatively.
 
-## Step 3 — Compile the answer
+## Step 3 — Compile the report
 
 Delegate `compile-agent` with the `ahj_id` and permit type. This step is
 **never skipped**, including on a cache hit — it's what guarantees every
-response follows the same structure. Return its output to the user as-is
-(you may add one short sentence of framing, e.g. noting an inferred permit
-type or an AHJ ambiguity you resolved, but do not rewrite or reformat the
-report itself).
+delivered report follows the same structure. Its output (see Output
+Contract) is content for Step 4, not something to paste into the chat.
+
+## Step 4 — Deliver it
+
+Follow "Delivering the output" in your system prompt: create a Notion page
+titled `<Permit Type> — <AHJ Name>, <State>` with `compile-agent`'s full
+report as its content, then reply to the user with a short summary (2–4
+sentences) and the page link. If Notion isn't available or the call fails,
+fall back to giving the full report directly in chat instead, saying
+plainly why. Either way, note any AHJ ambiguity you resolved or permit type
+you inferred back in Step 0.
 
 ## Output Contract
 
-Every answer to the user must follow this structure (enforced by
-`compile-agent`, but repeated here so you can sanity-check its output before
-relaying it):
+This is the structure `compile-agent`'s report — and therefore the Notion
+page content — must follow (also useful for sanity-checking its output
+before you create the page):
 
     # Permit Report: <Permit Type> — <AHJ Name>, <State>
 

@@ -17,10 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# claude CLI (spawned as a subprocess by claude_agent_sdk), pre-installed at
-# build time so there's no runtime npm-registry dependency or cold-start
-# latency on first tool call.
-RUN npm install -g @anthropic-ai/claude-code
+# claude CLI (spawned as a subprocess by claude_agent_sdk) and the
+# self-hosted Notion MCP server, pre-installed at build time so there's no
+# runtime npm-registry dependency or cold-start latency on first tool call.
+RUN npm install -g @anthropic-ai/claude-code @notionhq/notion-mcp-server
 
 WORKDIR /app
 
@@ -43,7 +43,7 @@ RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceT
 # expect: agent_config.py, events.py, main_agent.md, agents/, tools/, db/,
 # and .claude/ all live as siblings of backend/, anchored via Path(__file__),
 # not process cwd.
-COPY agent_config.py events.py main_agent.md ./
+COPY agent_config.py events.py chat_loop.py main_agent.md ./
 COPY .claude/ ./.claude/
 COPY agents/ ./agents/
 COPY tools/ ./tools/

@@ -18,7 +18,7 @@ import asyncio
 from claude_agent_sdk import ClaudeSDKClient
 
 from agent_config import build_options
-from events import classify_message
+from chat_loop import run_turn
 
 
 def render_event(event: dict) -> None:
@@ -54,12 +54,9 @@ async def main() -> None:
             if user_input.lower() in {"exit", "quit"}:
                 break
 
-            await client.query(user_input)
-
             print("\nAgent: ", end="")
-            async for message in client.receive_response():
-                for event in classify_message(message):
-                    render_event(event)
+            async for event in run_turn(client, user_input):
+                render_event(event)
             print()
 
 

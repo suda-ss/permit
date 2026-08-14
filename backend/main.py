@@ -14,6 +14,12 @@ Unlike research_Agent's backend, no client-side RAG injection happens here —
 the orchestrator's own find_ahj/get_structured_permit_data/vector_search
 tool calls (see agent_config.py, tools/mcp_tools.py) are the cache-check
 step, driven by .claude/skills/permit-research/SKILL.md.
+
+A single POST /api/chat call can stay open for several minutes: chat_loop's
+run_turn() automatically re-prompts the orchestrator roughly once a minute
+for status while it's still calling tools (e.g. waiting on a delegated
+subagent), so the response stream keeps producing events instead of ending
+the moment the orchestrator says "I'll follow up" and goes quiet.
 """
 
 import json
@@ -28,7 +34,7 @@ from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from backend.session_manager import sessions  # noqa: E402
-from events import classify_message  # noqa: E402
+from chat_loop import run_turn  # noqa: E402
 
 
 @asynccontextmanager
@@ -60,10 +66,8 @@ async def chat(request: ChatRequest) -> StreamingResponse:
 
     async def event_stream():
         try:
-            await client.query(request.message)
-            async for message in client.receive_response():
-                for event in classify_message(message):
-                    yield json.dumps(event) + "\n"
+            async for event in run_turn(client, request.message):
+                yield json.dumps(event) + "\n"
         except Exception as exc:  # surface to the chat UI instead of a bare 500
             yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
 

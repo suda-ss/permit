@@ -13,10 +13,14 @@ Python, next to where they're used. The skill
 (.claude/skills/permit-research/SKILL.md) is still filesystem-discovered via
 setting_sources, since the SDK has no equivalent inline-skill option.
 
-Mirrors research_Agent/agent_config.py's shape; see that file for the
-pattern this was modeled on.
+Mirrors research_Agent/agent_config.py's shape, including its
+_notion_mcp_server() pattern for delivering the final report; see that file
+for the pattern this was modeled on.
 """
 
+import json
+import os
+import sys
 from pathlib import Path
 
 from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions
@@ -43,9 +47,13 @@ DB_READ_TOOLS = [
 ]
 
 # Built-in tools available to the orchestrator. Subagents get their own,
-# narrower lists below.
+# narrower lists below. "mcp__notion" allows every tool exposed by that
+# server (harmless if the server itself is absent — see
+# _notion_mcp_server()); not granted to any subagent, since only the
+# orchestrator delivers the final report.
 ALLOWED_TOOLS = [
     "Task",  # required — lets the orchestrator delegate to subagents
+    "mcp__notion",
     *DB_READ_TOOLS,
 ]
 
@@ -125,8 +133,47 @@ AGENTS: dict[str, AgentDefinition] = {
 }
 
 
+def _notion_mcp_server() -> dict | None:
+    """Self-hosted Notion MCP server, authenticated via an internal
+    integration token — headless/container-friendly (no browser OAuth step,
+    unlike the hosted mcp.notion.com OAuth server this replaces).
+
+    Returns None (Notion simply unavailable) when NOTION_TOKEN isn't set,
+    rather than crashing the whole app — the orchestrator is instructed
+    (main_agent.md) to fall back to giving the full report directly in chat
+    when Notion delivery isn't available.
+
+    Verify the env var shape (`OPENAPI_MCP_HEADERS`) against
+    @notionhq/notion-mcp-server's current README before relying on this in
+    production; that package's auth interface has changed before.
+    """
+    token = os.environ.get("NOTION_TOKEN")
+    if not token:
+        print(
+            "[agent_config] NOTION_TOKEN not set — Notion delivery disabled "
+            "for this run.",
+            file=sys.stderr,
+        )
+        return None
+
+    return {
+        "command": "npx",
+        "args": ["-y", "@notionhq/notion-mcp-server"],
+        "env": {
+            "OPENAPI_MCP_HEADERS": json.dumps(
+                {"Authorization": f"Bearer {token}", "Notion-Version": "2022-06-28"}
+            ),
+        },
+    }
+
+
 def build_options() -> ClaudeAgentOptions:
     system_prompt = (HERE / "main_agent.md").read_text()
+
+    mcp_servers = {"permitdb": permit_db_server}
+    notion_server = _notion_mcp_server()
+    if notion_server is not None:
+        mcp_servers["notion"] = notion_server
 
     return ClaudeAgentOptions(
         system_prompt=system_prompt,
@@ -150,10 +197,17 @@ def build_options() -> ClaudeAgentOptions:
         # real access-control boundary; bypassPermissions just stops the CLI
         # from *also* pausing for interactive confirmation on top of that.
         permission_mode="bypassPermissions",
-        # Declared explicitly rather than relying on .mcp.json auto-discovery:
-        # the SDK only forwards MCP servers to the CLI subprocess when
-        # they're passed here, and a headless subprocess has no way to
-        # answer the interactive "trust this server?" prompt .mcp.json
-        # auto-discovery would otherwise trigger.
-        mcp_servers={"permitdb": permit_db_server},
+        mcp_servers=mcp_servers,
+        # Without this, the CLI subprocess *also* auto-loads project
+        # .mcp.json (which has a "notion" entry for interactive/dev use)
+        # regardless of what's passed via mcp_servers above — normally that
+        # would hang on an unanswerable "trust this server?" prompt, but
+        # bypassPermissions auto-approves it too, so notion-mcp-server was
+        # spawning on every session even with NOTION_TOKEN unset (confirmed
+        # by testing: stray notion-mcp-server child processes on every chat
+        # session, with an empty/invalid token, i.e. certain to fail if
+        # ever actually called). This makes mcp_servers above — and
+        # therefore _notion_mcp_server()'s NOTION_TOKEN check — the sole
+        # source of truth, matching the intended design.
+        strict_mcp_config=True,
     )
