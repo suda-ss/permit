@@ -7,7 +7,7 @@ browser). Identical in shape and purpose to research_Agent/events.py — kept
 as a separate copy so the two projects can evolve independently.
 
 Event shapes:
-  {"type": "text_delta",   "text": str}
+  {"type": "text_message", "text": str}
   {"type": "tool_call",    "name": str, "input": dict}
   {"type": "action_needed","message": str}
   {"type": "tool_result",  "content": ...}
@@ -36,7 +36,10 @@ def classify_message(message) -> list[dict]:
     if isinstance(message, AssistantMessage):
         for block in message.content:
             if isinstance(block, TextBlock):
-                events.append({"type": "text_delta", "text": block.text})
+                # An SDK TextBlock is a complete assistant message, not a
+                # token delta. Preserve that boundary so the UI and stored
+                # conversation render each agent update separately.
+                events.append({"type": "text_message", "text": block.text})
             elif isinstance(block, ToolUseBlock):
                 events.append(
                     {"type": "tool_call", "name": block.name, "input": block.input}

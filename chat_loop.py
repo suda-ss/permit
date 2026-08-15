@@ -16,8 +16,8 @@ from typing import AsyncIterator
 
 from events import classify_message
 
-NUDGE_INTERVAL_SECONDS = 60
-MAX_NUDGE_ROUNDS = 15  # ~15 minutes of automatic follow-up before giving up
+NUDGE_INTERVAL_SECONDS = 120
+MAX_NUDGE_ROUNDS = 15  # ~30 minutes of automatic follow-up before giving up
 
 NUDGE_PROMPT = (
     "[Automated status-check — not a real user message, do not treat it as "
@@ -25,8 +25,9 @@ NUDGE_PROMPT = (
     "has finished, deliver it now: create the Notion page (or fall back to "
     "the full report in chat if Notion isn't available) and give a short "
     "summary reply, per your system prompt's delivery rules. If work is "
-    "still in progress, give one brief, specific sentence on what's "
-    "currently happening — name the subagent and stage, not generic filler "
+    "still in progress, check the delegated work and give exactly two short "
+    "sentences: first name the subagent and current stage; second state the "
+    "latest concrete result, blocker, or next step. Never use generic filler "
     "like 'still working.']"
 )
 
@@ -63,10 +64,10 @@ async def run_turn(client, message: str) -> AsyncIterator[dict]:
             return
         if round_index >= MAX_NUDGE_ROUNDS:
             yield {
-                "type": "text_delta",
+                "type": "text_message",
                 "text": (
                     f"\n\n(Stopping automatic status checks after "
-                    f"{MAX_NUDGE_ROUNDS} minutes of activity — send another "
+                    f"{MAX_NUDGE_ROUNDS * NUDGE_INTERVAL_SECONDS // 60} minutes of activity — send another "
                     "message to keep going.)"
                 ),
             }

@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type ChatEvent =
+  | { type: "text_message"; text: string }
   | { type: "text_delta"; text: string }
   | { type: "tool_call"; name: string; input: unknown }
   | { type: "tool_result"; content: unknown }
@@ -331,9 +332,10 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [agentRunning, setAgentRunning] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   // A turn can span several rounds (the backend automatically nudges the
-  // orchestrator roughly once a minute — see chat_loop.py). Each round ends
+  // orchestrator roughly every two minutes — see chat_loop.py). Each round ends
   // with a "done" event; this flags that the *next* event should start a
   // fresh bubble instead of appending to the previous round's, so every
   // turn summary shows up as its own chat message.
@@ -344,18 +346,68 @@ export default function ChatPage() {
     refreshConversations();
   }, [user]);
 
-  // Instant (not smooth) scroll: turns can stream for minutes with events
-  // arriving every second or two (including ~60s status-check gaps), and a
+  // Instant (not smooth) scroll: turns can run for minutes with new durable
+  // messages arriving through polling, and a
   // smooth-scroll animation restarting on every single update looks jittery
   // rather than reliably keeping the latest content in view.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages]);
 
+  // Runs live on the server independently of this page. Poll both durable
+  // messages and run state so switching chats or refreshing can reattach to
+  // an active run without losing progress.
+  useEffect(() => {
+    if (!user || !conversationId || view !== "chat") {
+      setAgentRunning(false);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const response = await fetch(
+        authApiPath(`/api/conversations/${conversationId}/status`),
+        { credentials: "include" },
+      );
+      if (!response.ok || cancelled) return;
+      const data = await response.json();
+      if (cancelled) return;
+      setAgentRunning(Boolean(data.running));
+      await loadMessages(conversationId);
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user, conversationId, view]);
+
   function applyEvent(event: ChatEvent) {
     setMessages((prev) => {
+      if (event.type === "text_message") {
+        startNewBubbleRef.current = false;
+        const last = prev[prev.length - 1];
+        if (
+          last?.role === "assistant" &&
+          !last.text &&
+          last.notices.length === 0 &&
+          !last.error
+        ) {
+          return [
+            ...prev.slice(0, -1),
+            { ...last, text: event.text, status: null },
+          ];
+        }
+        return [...prev, { role: "assistant", text: event.text, status: null, notices: [] }];
+      }
+
       let next = prev;
-      if (startNewBubbleRef.current) {
+      // Refs are read when React executes this queued updater, not when
+      // applyEvent is called. A later event may already have changed the
+      // ref by then, so also enforce the role boundary here: agent events
+      // must never attach status/notices/errors to a user message.
+      const previousLast = prev[prev.length - 1];
+      if (startNewBubbleRef.current || previousLast?.role !== "assistant") {
         next = [...prev, { role: "assistant", text: "", status: null, notices: [] }];
         startNewBubbleRef.current = false;
       } else {
@@ -413,16 +465,23 @@ export default function ChatPage() {
     });
     if (!response.ok) return;
     const data = await response.json();
-    setMessages(
-      data.messages
-        .filter((item: StoredMessage) => item.role === "user" || item.role === "assistant")
-        .map((item: StoredMessage) => ({
-          role: item.role,
-          text: item.content,
-          status: null,
-          notices: [],
-        })),
-    );
+    const stored: Message[] = data.messages
+      .filter((item: StoredMessage) => item.role === "user" || item.role === "assistant")
+      .map((item: StoredMessage) => ({
+        role: item.role as "user" | "assistant",
+        text: item.content,
+        status: null,
+        notices: [],
+      }));
+    setMessages((current) => {
+      const unchanged =
+        current.length === stored.length &&
+        current.every(
+          (message, index) =>
+            message.role === stored[index].role && message.text === stored[index].text,
+        );
+      return unchanged ? current : stored;
+    });
   }
 
   async function openConversation(id: string) {
@@ -430,6 +489,7 @@ export default function ChatPage() {
     setView("chat");
     setSidebarOpen(false);
     setConversationId(id);
+    setAgentRunning(false);
     startNewBubbleRef.current = true;
     await loadMessages(id);
   }
@@ -440,6 +500,7 @@ export default function ChatPage() {
     setConversationId(null);
     setMessages([]);
     setInput("");
+    setAgentRunning(false);
     startNewBubbleRef.current = true;
   }
 
@@ -474,11 +535,14 @@ export default function ChatPage() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || busy || !user) return;
+    if (!text || busy || agentRunning || !user) return;
 
     setInput("");
     setBusy(true);
     startNewBubbleRef.current = true;
+    // Show the user's message immediately. Conversation creation and the
+    // agent request can take time and should not hold back the local bubble.
+    setMessages((prev) => [...prev, { role: "user", text, status: null, notices: [] }]);
     let activeId = conversationId;
     try {
       activeId = await activeConversation(text);
@@ -496,8 +560,6 @@ export default function ChatPage() {
         )
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
     );
-    setMessages((prev) => [...prev, { role: "user", text, status: null, notices: [] }]);
-
     try {
       // Must match basePath in next.config.js.
       const res = await fetch(authApiPath("/api/chat"), {
@@ -511,38 +573,11 @@ export default function ChatPage() {
         if (res.status === 401) setUser(null);
         throw new Error(`${res.status}: ${body}`);
       }
-      if (!res.body) {
-        throw new Error("No response body from server");
-      }
-
-      // Backend streams newline-delimited JSON events (not one big blob) —
-      // reading the body incrementally here is what makes the reply appear
-      // token-by-token instead of all at once. A single request can stay
-      // open for several minutes: the backend automatically re-prompts the
-      // orchestrator roughly once a minute for a status update while it's
-      // still working (see chat_loop.py), so events keep arriving instead
-      // of the connection going quiet.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          applyEvent(JSON.parse(line) as ChatEvent);
-        }
-      }
+      setAgentRunning(true);
+      await loadMessages(activeId);
     } catch (err) {
       applyEvent({ type: "error", message: (err as Error).message });
     } finally {
-      if (activeId) await loadMessages(activeId);
       await refreshConversations(false);
       if (activeId) setConversationId(activeId);
       setBusy(false);
@@ -563,6 +598,7 @@ export default function ChatPage() {
     setConversationId(null);
     setMessages([]);
     setInput("");
+    setAgentRunning(false);
   }
 
   if (!user) {
@@ -620,6 +656,11 @@ export default function ChatPage() {
                     {m.costUsd != null && <div className="cost">turn cost: ${m.costUsd.toFixed(4)}</div>}
                   </div>
                 ))}
+                {agentRunning && (
+                  <div className="bubble assistant">
+                    <div className="status-line"><span className="status-dot" />Permit Agent is working…</div>
+                  </div>
+                )}
                 <div ref={bottomRef} />
               </div>
             ) : (
@@ -627,15 +668,15 @@ export default function ChatPage() {
                 <div className="landing-mark">P</div>
                 <h1 className="landing-title">What permit do you want to research?</h1>
                 <form className="chat-input landing-input" onSubmit={handleSubmit}>
-                  <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder="e.g. What's required for a residential electrical permit in Austin, TX?" disabled={busy} autoFocus />
-                  <button type="submit" disabled={busy || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
+                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder="e.g. What's required for a residential electrical permit in Austin, TX?" disabled={busy || agentRunning} autoFocus />
+                  <button type="submit" disabled={busy || agentRunning || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
                 </form>
               </div>
             )}
             {hasStarted && (
               <form className="chat-input" onSubmit={handleSubmit}>
-                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder="e.g. What's required for a residential electrical permit in Austin, TX?" disabled={busy} />
-                <button type="submit" disabled={busy || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
+                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={submitOnEnter} placeholder={agentRunning ? "Permit Agent is working in this chat…" : "e.g. What's required for a residential electrical permit in Austin, TX?"} disabled={busy || agentRunning} />
+                <button type="submit" disabled={busy || agentRunning || !input.trim()} aria-label="Send message">{busy ? "..." : "↑"}</button>
               </form>
             )}
           </>

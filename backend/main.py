@@ -2,8 +2,7 @@
 FastAPI backend for the permit research orchestrator chat webapp.
 
 Exposes:
-  POST /api/chat    - streams the orchestrator's response as newline-delimited
-                       JSON events (see events.py for the event shapes)
+  POST /api/chat    - starts a durable background agent run
   GET  /api/health  - liveness check for Docker/nginx
 
 Session identity (session_id) is supplied by the client (one per browser
@@ -15,14 +14,12 @@ the orchestrator's own find_ahj/get_structured_permit_data/vector_search
 tool calls (see agent_config.py, tools/mcp_tools.py) are the cache-check
 step, driven by .claude/skills/permit-research/SKILL.md.
 
-A single POST /api/chat call can stay open for several minutes: chat_loop's
-run_turn() automatically re-prompts the orchestrator roughly once a minute
-for status while it's still calling tools (e.g. waiting on a delegated
-subagent), so the response stream keeps producing events instead of ending
-the moment the orchestrator says "I'll follow up" and goes quiet.
+Runs continue after the browser leaves the page. chat_loop automatically
+re-prompts the orchestrator every two minutes, and every agent summary is
+persisted before the conversation polling endpoint exposes it to the UI.
 """
 
-import json
+import asyncio
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -31,7 +28,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from backend.auth import google_callback, google_start, login, logout, me, register, require_user  # noqa: E402
@@ -41,10 +37,25 @@ from tools.db import close_pool  # noqa: E402
 from tools.db import get_pool  # noqa: E402
 
 
+background_tasks: set[asyncio.Task] = set()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     sessions.start_reaper()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """UPDATE permit_chat_runs
+                  SET status='failed', error='Server restarted before this run completed',
+                      completed_at=now()
+                WHERE status='running'"""
+        )
     yield
+    for task in list(background_tasks):
+        task.cancel()
+    if background_tasks:
+        await asyncio.gather(*background_tasks, return_exceptions=True)
     await close_pool()
     await sessions.shutdown()
 
@@ -132,11 +143,40 @@ async def conversation_messages(conversation_id: uuid.UUID, request: Request) ->
     return {"messages": [dict(row) for row in rows]}
 
 
+@app.get("/api/conversations/{conversation_id}/status")
+async def conversation_status(conversation_id: uuid.UUID, request: Request) -> dict:
+    user = await require_user(request)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM permit_conversations WHERE id=$1 AND user_id=$2)",
+            conversation_id,
+            user["id"],
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        run = await conn.fetchrow(
+            """SELECT id, status, error, started_at, completed_at
+                 FROM permit_chat_runs
+                WHERE conversation_id=$1 AND user_id=$2
+                ORDER BY started_at DESC LIMIT 1""",
+            conversation_id,
+            user["id"],
+        )
+    return {"running": bool(run and run["status"] == "running"), "run": dict(run) if run else None}
+
+
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> dict:
     user = await require_user(request)
     pool = await get_pool()
     async with pool.acquire() as conn:
+        running = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM permit_chat_runs WHERE conversation_id=$1 AND status='running')",
+            conversation_id,
+        )
+        if running:
+            raise HTTPException(status_code=409, detail="Wait for the active agent run to finish before deleting this conversation")
         deleted = await conn.fetchval(
             "DELETE FROM permit_conversations WHERE id=$1 AND user_id=$2 RETURNING id",
             conversation_id,
@@ -149,7 +189,7 @@ async def delete_conversation(conversation_id: uuid.UUID, request: Request) -> d
 
 
 @app.post("/api/chat")
-async def chat(chat_request: ChatRequest, request: Request) -> StreamingResponse:
+async def chat(chat_request: ChatRequest, request: Request) -> dict:
     user = await require_user(request)
 
     if not chat_request.message.strip():
@@ -164,6 +204,12 @@ async def chat(chat_request: ChatRequest, request: Request) -> StreamingResponse
         )
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        running = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM permit_chat_runs WHERE conversation_id=$1 AND status='running')",
+            chat_request.conversation_id,
+        )
+        if running:
+            raise HTTPException(status_code=409, detail="An agent is already working in this conversation")
         history_exists = await conn.fetchval(
             "SELECT EXISTS(SELECT 1 FROM permit_conversation_messages WHERE conversation_id=$1 AND user_id=$2)",
             chat_request.conversation_id,
@@ -189,34 +235,66 @@ async def chat(chat_request: ChatRequest, request: Request) -> StreamingResponse
                 "UPDATE permit_conversations SET updated_at=now() WHERE id=$1",
                 chat_request.conversation_id,
             )
+        run_id = await conn.fetchval(
+            """INSERT INTO permit_chat_runs (conversation_id, user_id, status)
+                 VALUES ($1, $2, 'running') RETURNING id""",
+            chat_request.conversation_id,
+            user["id"],
+        )
 
-    scoped_session_id = f"auth-user:{user['id']}:{chat_request.conversation_id}"
-    client = await sessions.get_or_create(scoped_session_id)
-
-    async def event_stream():
-        assistant_text = ""
+    async def execute_run() -> None:
         try:
+            scoped_session_id = f"auth-user:{user['id']}:{chat_request.conversation_id}"
+            client = await sessions.get_or_create(scoped_session_id)
             async for event in run_turn(client, chat_request.message):
-                if event.get("type") == "text_delta":
-                    assistant_text += event.get("text", "")
-                yield json.dumps(event) + "\n"
-        except Exception as exc:  # surface to the chat UI instead of a bare 500
-            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
-        finally:
-            if assistant_text.strip():
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        """
-                        INSERT INTO permit_conversation_messages (conversation_id, user_id, role, content)
-                        VALUES ($1, $2, 'assistant', $3)
-                        """,
-                        chat_request.conversation_id,
-                        user["id"],
-                        assistant_text.strip(),
-                    )
-                    await conn.execute(
-                        "UPDATE permit_conversations SET updated_at=now() WHERE id=$1",
-                        chat_request.conversation_id,
-                    )
+                event_type = event.get("type")
+                content = ""
+                if event_type in {"text_message", "text_delta"}:
+                    content = event.get("text", "").strip()
+                elif event_type == "action_needed":
+                    content = event.get("message", "").strip()
+                if content:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            INSERT INTO permit_conversation_messages
+                                (conversation_id, user_id, role, content)
+                            VALUES ($1, $2, 'assistant', $3)
+                            """,
+                            chat_request.conversation_id,
+                            user["id"],
+                            content,
+                        )
+                        await conn.execute(
+                            "UPDATE permit_conversations SET updated_at=now() WHERE id=$1",
+                            chat_request.conversation_id,
+                        )
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE permit_chat_runs SET status='completed', completed_at=now()
+                         WHERE id=$1 AND status='running'""",
+                    run_id,
+                )
+        except Exception as exc:
+            error_text = f"Agent run failed: {exc}"
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO permit_conversation_messages
+                           (conversation_id, user_id, role, content)
+                         VALUES ($1, $2, 'assistant', $3)""",
+                    chat_request.conversation_id,
+                    user["id"],
+                    error_text,
+                )
+                await conn.execute(
+                    """UPDATE permit_chat_runs
+                          SET status='failed', error=$1, completed_at=now()
+                        WHERE id=$2""",
+                    str(exc),
+                    run_id,
+                )
 
-    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+    task = asyncio.create_task(execute_run())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
+    return {"accepted": True, "run_id": str(run_id)}
