@@ -20,6 +20,7 @@ persisted before the conversation polling endpoint exposes it to the UI.
 """
 
 import asyncio
+import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -38,6 +39,7 @@ from tools.db import get_pool  # noqa: E402
 
 
 background_tasks: set[asyncio.Task] = set()
+STATUS_INTERVAL_SECONDS = int(os.getenv("CHAT_STATUS_INTERVAL_SECONDS", "120"))
 
 
 @asynccontextmanager
@@ -115,6 +117,30 @@ async def create_conversation(payload: ConversationRequest, request: Request) ->
             user["id"],
             title,
         )
+    return dict(row)
+
+
+@app.patch("/api/conversations/{conversation_id}")
+async def rename_conversation(
+    conversation_id: uuid.UUID, payload: ConversationRequest, request: Request
+) -> dict:
+    user = await require_user(request)
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """UPDATE permit_conversations
+                  SET title=$1, updated_at=now()
+                WHERE id=$2 AND user_id=$3
+                RETURNING id, title, created_at, updated_at""",
+            title[:120],
+            conversation_id,
+            user["id"],
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     return dict(row)
 
 
@@ -241,8 +267,47 @@ async def chat(chat_request: ChatRequest, request: Request) -> dict:
             chat_request.conversation_id,
             user["id"],
         )
+        await conn.execute(
+            """INSERT INTO permit_conversation_messages
+                   (conversation_id, user_id, role, content)
+                 VALUES ($1, $2, 'assistant', $3)""",
+            chat_request.conversation_id,
+            user["id"],
+            "Permit Agent is working on your request.\n"
+            "I’ll post another update here within two minutes.",
+        )
 
     async def execute_run() -> None:
+        stage = "reviewing the request and planning the permit research"
+        run_finished = asyncio.Event()
+
+        async def persist_assistant(content: str) -> None:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO permit_conversation_messages
+                           (conversation_id, user_id, role, content)
+                         VALUES ($1, $2, 'assistant', $3)""",
+                    chat_request.conversation_id,
+                    user["id"],
+                    content,
+                )
+                await conn.execute(
+                    "UPDATE permit_conversations SET updated_at=now() WHERE id=$1",
+                    chat_request.conversation_id,
+                )
+
+        async def heartbeat() -> None:
+            while True:
+                await asyncio.sleep(STATUS_INTERVAL_SECONDS)
+                if run_finished.is_set():
+                    return
+                summary = (
+                    f"Permit Agent is working: {stage}.\n"
+                    "The background run is active; another update will appear within two minutes."
+                )
+                await persist_assistant(summary)
+
+        heartbeat_task = asyncio.create_task(heartbeat())
         try:
             scoped_session_id = f"auth-user:{user['id']}:{chat_request.conversation_id}"
             client = await sessions.get_or_create(scoped_session_id)
@@ -253,22 +318,21 @@ async def chat(chat_request: ChatRequest, request: Request) -> dict:
                     content = event.get("text", "").strip()
                 elif event_type == "action_needed":
                     content = event.get("message", "").strip()
+                elif event_type == "tool_call":
+                    name = str(event.get("name") or "research")
+                    tool_input = event.get("input") or {}
+                    if name in {"Agent", "Task"} and isinstance(tool_input, dict):
+                        specialist = (
+                            tool_input.get("subagent_type")
+                            or tool_input.get("description")
+                            or "a specialist subagent"
+                        )
+                        stage = f"coordinating {specialist}"
+                    else:
+                        stage = f"completing the {name} stage"
                 if content:
-                    async with pool.acquire() as conn:
-                        await conn.execute(
-                            """
-                            INSERT INTO permit_conversation_messages
-                                (conversation_id, user_id, role, content)
-                            VALUES ($1, $2, 'assistant', $3)
-                            """,
-                            chat_request.conversation_id,
-                            user["id"],
-                            content,
-                        )
-                        await conn.execute(
-                            "UPDATE permit_conversations SET updated_at=now() WHERE id=$1",
-                            chat_request.conversation_id,
-                        )
+                    await persist_assistant(content)
+            run_finished.set()
             async with pool.acquire() as conn:
                 await conn.execute(
                     """UPDATE permit_chat_runs SET status='completed', completed_at=now()
@@ -276,6 +340,7 @@ async def chat(chat_request: ChatRequest, request: Request) -> dict:
                     run_id,
                 )
         except Exception as exc:
+            run_finished.set()
             error_text = f"Agent run failed: {exc}"
             async with pool.acquire() as conn:
                 await conn.execute(
@@ -293,6 +358,13 @@ async def chat(chat_request: ChatRequest, request: Request) -> dict:
                     str(exc),
                     run_id,
                 )
+        finally:
+            run_finished.set()
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
     task = asyncio.create_task(execute_run())
     background_tasks.add(task)

@@ -80,6 +80,20 @@ function authApiPath(path: string): string {
   return `${APP_BASE_PATH}${path}`;
 }
 
+function activeConversationKey(userId: number | string): string {
+  return `permit-agent:active-conversation:${userId}`;
+}
+
+function conversationIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("chat");
+}
+
+function conversationUrl(id?: string): string {
+  return id
+    ? `${window.location.pathname}?chat=${encodeURIComponent(id)}`
+    : window.location.pathname;
+}
+
 function authErrorMessage(body: unknown, fallback: string): string {
   if (body && typeof body === "object" && "message" in body) {
     const message = String((body as { message?: unknown }).message || "").trim();
@@ -333,6 +347,8 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [agentRunning, setAgentRunning] = useState(false);
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [conversationTitleDraft, setConversationTitleDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   // A turn can span several rounds (the backend automatically nudges the
   // orchestrator roughly every two minutes — see chat_loop.py). Each round ends
@@ -344,6 +360,27 @@ export default function ChatPage() {
   useEffect(() => {
     if (!user) return;
     refreshConversations();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const handleHistoryNavigation = () => {
+      const id = conversationIdFromUrl();
+      setView("chat");
+      setAgentRunning(false);
+      startNewBubbleRef.current = true;
+      if (id) {
+        setConversationId(id);
+        window.localStorage.setItem(activeConversationKey(user.id), id);
+        loadMessages(id);
+      } else {
+        setConversationId(null);
+        setMessages([]);
+        window.localStorage.removeItem(activeConversationKey(user.id));
+      }
+    };
+    window.addEventListener("popstate", handleHistoryNavigation);
+    return () => window.removeEventListener("popstate", handleHistoryNavigation);
   }, [user]);
 
   // Instant (not smooth) scroll: turns can run for minutes with new durable
@@ -454,8 +491,23 @@ export default function ChatPage() {
     setConversations(data.conversations);
     if (resetToNew) {
       setView("chat");
-      setConversationId(null);
-      setMessages([]);
+      const urlId = conversationIdFromUrl();
+      const savedId =
+        urlId ||
+        (user ? window.localStorage.getItem(activeConversationKey(user.id)) : null);
+      const canRestore = data.conversations.some(
+        (conversation: Conversation) => conversation.id === savedId,
+      );
+      if (savedId && canRestore) {
+        setConversationId(savedId);
+        if (user) window.localStorage.setItem(activeConversationKey(user.id), savedId);
+        window.history.replaceState({}, "", conversationUrl(savedId));
+        await loadMessages(savedId);
+      } else {
+        setConversationId(null);
+        setMessages([]);
+        window.history.replaceState({}, "", conversationUrl());
+      }
     }
   }
 
@@ -489,6 +541,8 @@ export default function ChatPage() {
     setView("chat");
     setSidebarOpen(false);
     setConversationId(id);
+    if (user) window.localStorage.setItem(activeConversationKey(user.id), id);
+    window.history.pushState({}, "", conversationUrl(id));
     setAgentRunning(false);
     startNewBubbleRef.current = true;
     await loadMessages(id);
@@ -498,6 +552,8 @@ export default function ChatPage() {
     setView("chat");
     setSidebarOpen(false);
     setConversationId(null);
+    if (user) window.localStorage.removeItem(activeConversationKey(user.id));
+    window.history.pushState({}, "", conversationUrl());
     setMessages([]);
     setInput("");
     setAgentRunning(false);
@@ -516,6 +572,8 @@ export default function ChatPage() {
     const data = await response.json();
     setConversations((current) => [data, ...current]);
     setConversationId(data.id);
+    if (user) window.localStorage.setItem(activeConversationKey(user.id), data.id);
+    window.history.replaceState({}, "", conversationUrl(data.id));
     return data.id as string;
   }
 
@@ -531,6 +589,46 @@ export default function ChatPage() {
       if (conversationId === id) newConversation();
     }
     setBusy(false);
+  }
+
+  function beginRenameConversation(id: string, currentTitle: string) {
+    setEditingConversationId(id);
+    setConversationTitleDraft(currentTitle);
+  }
+
+  function cancelRenameConversation() {
+    setEditingConversationId(null);
+    setConversationTitleDraft("");
+  }
+
+  async function renameConversation(id: string, currentTitle: string) {
+    const title = conversationTitleDraft.trim();
+    if (!title || title === currentTitle) {
+      cancelRenameConversation();
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const response = await fetch(authApiPath(`/api/conversations/${id}`), {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      if (!response.ok) throw new Error("Could not rename the conversation");
+      const updated = await response.json();
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === id ? { ...conversation, ...updated } : conversation,
+        ),
+      );
+      cancelRenameConversation();
+    } catch (err) {
+      window.alert((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function sendMessage() {
@@ -594,6 +692,8 @@ export default function ChatPage() {
   async function logout() {
     await authApi("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     setUser(null);
+    if (user) window.localStorage.removeItem(activeConversationKey(user.id));
+    window.history.replaceState({}, "", conversationUrl());
     setConversations([]);
     setConversationId(null);
     setMessages([]);
@@ -622,8 +722,30 @@ export default function ChatPage() {
           <small>Recent chats</small>
           {conversations.length === 0 ? <p>No conversations yet</p> : conversations.map((item) => (
             <div className={item.id === conversationId && view === "chat" ? "thread active" : "thread"} key={item.id}>
-              <button className="thread-open" type="button" onClick={() => openConversation(item.id)} disabled={busy}><span>◫</span><span>{item.title}</span></button>
-              <button className="thread-delete" type="button" onClick={() => deleteConversation(item.id, item.title)} disabled={busy} aria-label={`Delete ${item.title}`}>×</button>
+              {editingConversationId === item.id ? (
+                <form className="thread-rename-form" onSubmit={(event) => { event.preventDefault(); renameConversation(item.id, item.title); }}>
+                  <input
+                    value={conversationTitleDraft}
+                    onChange={(event) => setConversationTitleDraft(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Escape") cancelRenameConversation(); }}
+                    maxLength={120}
+                    aria-label="Conversation name"
+                    autoFocus
+                  />
+                </form>
+              ) : (
+                <button className="thread-open" type="button" onClick={() => openConversation(item.id)} disabled={busy}><span>◫</span><span>{item.title}</span></button>
+              )}
+              {editingConversationId === item.id ? (
+                <button className="thread-rename save" type="button" onClick={() => renameConversation(item.id, item.title)} disabled={busy || !conversationTitleDraft.trim()} aria-label="Save conversation name" title="Save">✓</button>
+              ) : (
+                <button className="thread-rename" type="button" onClick={() => beginRenameConversation(item.id, item.title)} disabled={busy} aria-label={`Rename ${item.title}`} title="Rename conversation">✎</button>
+              )}
+              {editingConversationId === item.id ? (
+                <button className="thread-delete cancel" type="button" onClick={cancelRenameConversation} disabled={busy} aria-label="Cancel rename" title="Cancel">×</button>
+              ) : (
+                <button className="thread-delete" type="button" onClick={() => deleteConversation(item.id, item.title)} disabled={busy} aria-label={`Delete ${item.title}`}>×</button>
+              )}
             </div>
           ))}
         </nav>

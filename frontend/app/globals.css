@@ -859,7 +859,7 @@ body {
 
 .thread {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
   align-items: center;
   margin: 0.15rem 0;
   border-radius: 8px;
@@ -894,6 +894,25 @@ body {
   white-space: nowrap;
 }
 
+.thread-rename-form {
+  min-width: 0;
+  padding: 0.25rem 0.3rem;
+}
+
+.thread-rename-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #60a5fa;
+  border-radius: 6px;
+  outline: none;
+  background: #0f172a;
+  color: white;
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.thread-rename,
 .thread-delete {
   width: 28px;
   height: 28px;
@@ -904,6 +923,19 @@ body {
   color: #94a3b8;
   font-size: 1.1rem;
   cursor: pointer;
+}
+
+.thread-rename:hover {
+  background: #334155;
+  color: white;
+}
+
+.thread-rename.save {
+  color: #86efac;
+}
+
+.thread-delete.cancel:hover {
+  background: #334155;
 }
 
 .thread-delete:hover {
