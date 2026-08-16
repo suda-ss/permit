@@ -19,7 +19,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-RAW_DIR = Path(os.environ.get("RAW_STORAGE_DIR", HERE / "storage" / "raw"))
+_raw_storage_dir_env = os.environ.get("RAW_STORAGE_DIR")
+# Join against HERE even when the env var is set, so a relative value like
+# "storage/raw" (as exported by local_setup.sh) still resolves to an
+# absolute path under the project root. If the env var is already absolute,
+# the "/" join discards HERE automatically (pathlib semantics), so this is
+# safe either way.
+RAW_DIR = (HERE / _raw_storage_dir_env) if _raw_storage_dir_env else (HERE / "storage" / "raw")
 
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")

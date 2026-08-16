@@ -610,13 +610,21 @@ export default function ChatPage() {
 
     setBusy(true);
     try {
-      const response = await fetch(authApiPath(`/api/conversations/${id}`), {
-        method: "PATCH",
+      const response = await fetch(authApiPath(`/api/conversations/${id}/rename`), {
+        method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title }),
       });
-      if (!response.ok) throw new Error("Could not rename the conversation");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const detail = String(body.detail || body.message || "").trim();
+        throw new Error(
+          detail
+            ? `Could not rename the conversation: ${detail}`
+            : `Could not rename the conversation (${response.status})`,
+        );
+      }
       const updated = await response.json();
       setConversations((current) =>
         current.map((conversation) =>

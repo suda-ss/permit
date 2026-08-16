@@ -121,6 +121,7 @@ async def create_conversation(payload: ConversationRequest, request: Request) ->
 
 
 @app.patch("/api/conversations/{conversation_id}")
+@app.post("/api/conversations/{conversation_id}/rename")
 async def rename_conversation(
     conversation_id: uuid.UUID, payload: ConversationRequest, request: Request
 ) -> dict:
